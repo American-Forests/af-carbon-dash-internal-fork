@@ -1,16 +1,42 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi import Depends
+from fastapi.responses import FileResponse
 from pathlib import Path
 import json
 import pandas as pd
 import numpy as np
+import subprocess
+import datetime
+import os
+import tempfile
+import shutil
 
 from model_service.model import compute_proforma, compute_summaries, compute_carbon_scores, compute_carbon_units
-from model_service.schemas import ProformaRequest, ProformaResponse, CarbonInputs, CarbonResponse, CarbonUnitsRequest, CarbonUnitsResponse
+from model_service.schemas import ProformaRequest, ProformaResponse, CarbonInputs, CarbonResponse, CarbonUnitsRequest, CarbonUnitsResponse, ReportRequest
+
+from utils.config import get_api_base_url
 
 app = FastAPI(title="Carbon Model Service")
 
-BASE_PATH = Path("conf/base")
+API_BASE_URL = get_api_base_url()
+
+SUPPORTED_VARIANTS = {"EC", "PN"}
+
+def normalize_variant(value: str) -> str:
+    if value is None:
+        return ""
+    normalized = str(value).strip().upper()
+    for variant in SUPPORTED_VARIANTS:
+        if variant in normalized:
+            return variant
+    return normalized
+
+# BASE_PATH = Path("conf/base")
+# QUARTO_DIR = Path("model_service/quarto")
+
+APP_ROOT = Path(__file__).resolve().parent.parent
+BASE_PATH = APP_ROOT / "conf" / "base"
+QUARTO_DIR = APP_ROOT / "model_service" / "quarto"
 
 def load_json(filename: str):
     with open(BASE_PATH / filename, "r") as f:
@@ -104,3 +130,96 @@ def carbon_units_endpoint(req: CarbonUnitsRequest,
     return {
         "rows": df_units.to_dict(orient="records")
     }
+
+#QUARTO REPORTING
+@app.post("/reports/generate")
+def generate_report(req: ReportRequest = None):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
+
+    TMP_DIR = Path("/tmp/quarto")
+    DATA_DIR = TMP_DIR / "data"
+    REPORTS_DIR = TMP_DIR / "reports"
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    output_file = REPORTS_DIR / f"report_{timestamp}.pdf"
+
+    temp_dir = None
+
+    try:
+        if req:
+            # pd.DataFrame(req.data.planting_design).to_csv(DATA_DIR / "planting_design.csv", index=False, header=None)
+            # pd.DataFrame(req.data.species_mix).to_csv(DATA_DIR / "species_mix.csv", index=False, header=None)
+            # pd.DataFrame(req.data.financial_options1).to_csv(DATA_DIR / "financial_options1.csv", index=False, header=None)
+            # pd.DataFrame(req.data.financial_options2).to_csv(DATA_DIR / "financial_options2.csv", index=False, header=None)
+            # pd.DataFrame(req.data.carbon).to_csv(DATA_DIR / "carbon.csv", index=False)
+            # pd.DataFrame([{"variant": req.data.selected_variant}]).to_csv(DATA_DIR / "variant.csv", index=False)
+
+                df = pd.DataFrame(req.data.planting_design)
+                df.to_csv(DATA_DIR / "planting_design.csv", index=False, header=None)
+                del df
+
+                df = pd.DataFrame(req.data.species_mix)
+                df.to_csv(DATA_DIR / "species_mix.csv", index=False, header=None)
+                del df
+
+                df = pd.DataFrame(req.data.financial_options1)
+                df.to_csv(DATA_DIR / "financial_options1.csv", index=False, header=None)
+                del df
+
+                df = pd.DataFrame(req.data.financial_options2)
+                df.to_csv(DATA_DIR / "financial_options2.csv", index=False, header=None)
+                del df
+
+                df = pd.DataFrame(req.data.carbon)
+                df.to_csv(DATA_DIR / "carbon.csv", index=False)
+                del df
+
+                selected_variant = normalize_variant(req.data.selected_variant)
+                if selected_variant not in SUPPORTED_VARIANTS:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Unsupported variant value. "
+                            f"Expected one of {sorted(SUPPORTED_VARIANTS)}, got: {selected_variant!r}"
+                        ),
+                    )
+
+                df = pd.DataFrame([{"variant": selected_variant}])
+                df.to_csv(DATA_DIR / "variant.csv", index=False)
+                del df
+
+        env = os.environ.copy()
+        env["QUARTO_DATA_DIR"] = str(DATA_DIR)
+        env["QUARTO_FIG_DIR"] = str(QUARTO_DIR / "data" / "fig")
+
+        result = subprocess.run(
+            [
+                "quarto", "render", str(QUARTO_DIR / "report.ipynb"),
+                "--to", "typst-pdf",
+                "--output-dir", str(REPORTS_DIR),
+                "--output", f"report_{timestamp}.pdf",
+                "--execute", "--no-cache"
+            ],
+            cwd=str(QUARTO_DIR),
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+        if result.returncode != 0:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Quarto failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+            )
+
+        return FileResponse(
+            path=output_file,
+            media_type="application/pdf",
+            filename=output_file.name,
+        )
+
+    finally:
+        if temp_dir and temp_dir.exists():
+            shutil.rmtree(temp_dir)
