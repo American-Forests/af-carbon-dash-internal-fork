@@ -1,0 +1,17 @@
+# Streamlit Configuration
+# This configuration is optimized for containerized deployment behind nginx reverse proxy
+
+[server]
+# Disable XSRF protection to avoid WebSocket issues when running behind nginx proxy
+# Required for combined container deployment
+enableXsrfProtection = false
+
+# Run in headless mode (no browser auto-open)
+# Required for container/server environments without a display
+# For local development, browser won't auto-open but app still works at http://localhost:8501
+headless = true
+
+[browser]
+# Disable usage statistics collection to Streamlit
+# Privacy/compliance preference - optional setting
+gatherUsageStats = false

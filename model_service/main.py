@@ -3,17 +3,12 @@ from fastapi import Depends
 from pathlib import Path
 import json
 import pandas as pd
-import requests
 import numpy as np
 
 from model_service.model import compute_proforma, compute_summaries, compute_carbon_scores, compute_carbon_units
 from model_service.schemas import ProformaRequest, ProformaResponse, CarbonInputs, CarbonResponse, CarbonUnitsRequest, CarbonUnitsResponse
 
-from utils.config import get_api_base_url
-
 app = FastAPI(title="Carbon Model Service")
-
-API_BASE_URL = get_api_base_url()
 
 BASE_PATH = Path("conf/base")
 
@@ -22,29 +17,19 @@ def load_json(filename: str):
         return json.load(f)
     
 def fetch_carbon_coefficients():
-    resp = requests.get(f"{API_BASE_URL}/carbon/coefficients", timeout=5)
-    resp.raise_for_status()
-    return resp.json()
+    return load_json("carbon_model_coefficients.json")
 
 def _load_proforma_defaults() -> dict:
-    resp = requests.get(f"{API_BASE_URL}/proforma/presets", timeout=5)
-    resp.raise_for_status()
-    return resp.json()
+    return load_json("proforma_presets.json")
 
 def load_variant_presets() -> dict:
-    resp = requests.get(f"{API_BASE_URL}/variant/presets", timeout=5)
-    resp.raise_for_status()
-    return resp.json()
+    return load_json("FVSVariant_presets.json")
 
 def load_species_labels() -> dict:
-    resp = requests.get(f"{API_BASE_URL}/species/labels", timeout=5)
-    resp.raise_for_status()
-    return resp.json()
+    return load_json("species_labels.json")
 
 def load_protocol_rules() -> dict:
-    resp = requests.get(f"{API_BASE_URL}/protocol/rules", timeout=5)
-    resp.raise_for_status()
-    return resp.json()
+    return load_json("protocol_rules.json")
 
 @app.get("/carbon/coefficients")
 def get_carbon_coefficients():
